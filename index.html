@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<!-- <html xmlns="http://www.w3.org/1999/xhtml"> -->
+  <head>
+    <meta http-equiv="content-type" content="text/html; charset=utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="style.css?version=1" type="text/css"/>
+    <title>Google Drive NLP</title>
+  </head>
+  <body>
+    <p id="content"></p>
+    <input id="question" type="text" placeholder="Question"></input>
+    <button class="buttonExecute" id="buttonExecute" name="buttonExecute" onclick="loadPicker()">Submit</button>
+    <p id="answer"></p>
+    <table id="resultTable" style="width:100%">
+      <tr>
+        <th>File</th>
+        <th>Question</th>
+        <th>Answer</th>
+        <th>Confidence</th>
+      </tr>
+    </table>
+    <p id="log" style="font-size:75%;">Log:<br></p>
+
+    <script type="text/javascript" src="credentials.js"></script>
+    <script type="text/javascript">
+    appendPre('After you click submit, Google will say it is not safe. Click advanced and continue.');
+    appendPre('This is an integration between Google Drive and thecape.ai. I am not associated with either party.\n')
+
+    // Get the input field
+    var input = document.getElementById("question");
+
+    // Execute a function when the user releases a key on the keyboard
+    input.addEventListener("keyup", function(event) {
+      // Cancel the default action, if needed
+      event.preventDefault();
+      // Number 13 is the "Enter" key on the keyboard
+      if (event.keyCode === 13) {
+        // Trigger the button element with a click
+        document.getElementById("buttonExecute").click();
+      }
+    });
+
+    var pickerApiLoaded = false;
+    var oauthToken;
+    var count = 0;
+
+    // Use the Google API Loader script to load the google.picker script.
+    function loadPicker() {
+      if (count == 0) {
+        gapi.load('auth', {'callback': onAuthApiLoad});
+        gapi.load('client:auth2', initClient);
+      }
+      gapi.load('picker', {'callback': onPickerApiLoad});
+      count++;
+    }
+
+    function onAuthApiLoad() {
+      window.gapi.auth.authorize(
+          {
+            'client_id': clientId,
+            'scope': scope,
+            'immediate': false
+          },
+          handleAuthResult);
+    }
+
+    function initClient() {
+      gapi.client.init({
+        apiKey: developerKey,
+        clientId: clientId,
+        discoveryDocs: DISCOVERY_DOCS,
+        scope: scope
+      });
+    }
+
+    function onPickerApiLoad() {
+      pickerApiLoaded = true;
+      createPicker();
+    }
+
+    function handleAuthResult(authResult) {
+      appendPost('handleAuthResult');
+      if (authResult && !authResult.error) {
+        oauthToken = authResult.access_token;
+        appendPost('picker being created');
+        createPicker();
+      }
+      else {
+        appendPost(authResult.error);
+        if (authResult.error == "popup_blocked_by_browser") {
+          alert('Please allow popups from this website so it can authorize your Google account, then refresh the page');
+        }
+      }
+    }
+
+    // Create and render a Picker object for searching images.
+    function createPicker() {
+      if (pickerApiLoaded && oauthToken) {
+        var view = new google.picker.View(google.picker.ViewId.DOCUMENTS);
+        var picker = new google.picker.PickerBuilder()
+            .enableFeature(google.picker.Feature.NAV_HIDDEN)
+            .enableFeature(google.picker.Feature.MULTISELECT_ENABLED)
+            .setAppId(appId)
+            .setOAuthToken(oauthToken)
+            .addView(view)
+            .addView(new google.picker.DocsUploadView())
+            .setDeveloperKey(developerKey)
+            .setCallback(pickerCallback)
+            .build();
+         picker.setVisible(true);
+      }
+    }
+
+    // A simple callback implementation.
+    function pickerCallback(data) {
+      if (data.action == google.picker.Action.PICKED) {
+        var fileId = data.docs[0].id;
+        // alert('The user selected: ' + data.docs[0].name + ' ' + fileId);
+        appendPost('file info being sent to execute()');
+        var question = document.getElementById('question').value;
+        var table = document.getElementById("resultTable");
+        var row = table.insertRow(count);
+        var cell1 = row.insertCell(0);
+        var cell2 = row.insertCell(1);
+        var cell3 = row.insertCell(2);
+        var cell4 = row.insertCell(3);
+        cell1.innerHTML = data.docs[0].name;
+        cell2.innerHTML = question;
+        cell3.innerHTML = 'Loading...';
+        cell4.innerHTML = '';
+        execute(fileId);
+      }
+    }
+
+    /**
+     * Append a pre element to the body containing the given message
+     * as its text node. Used to display the results of the API call.
+     *
+     * @param {string} message Text to be placed in pre element.
+     */
+    function appendPre(message) {
+      var par = document.getElementById('content');
+      var br = document.createElement("br");
+      var textContent = document.createTextNode(message);
+      par.appendChild(textContent);
+      par.appendChild(br);
+    }
+
+    function appendPost(message) {
+      var par = document.getElementById('log');
+      var br = document.createElement("br");
+      var textContent = document.createTextNode(message);
+      par.appendChild(textContent);
+      par.appendChild(br);
+    }
+
+    function execute(file_id) {
+      gapi.client.drive.files.export({
+        "fileId": file_id,
+        "mimeType": "text/plain"
+      }).then(function(response) {
+        // Handle the results here (response.result has the parsed body).
+        cape(response.body);
+      },
+      function(err) { console.error("Execute error", err); });
+    }
+
+    function cape(context) {
+      appendPost('reached cape()');
+      var question = document.getElementById('question').value;
+      context = context.replace(/(\r\n\t|\n|\r\t)/gm,"");
+      context = context.replace(/ +(?= )/g,'');
+      context = context.split(' ').join('+');
+      context = context.replace(/'/g, '');
+      question = question.replace(/(\r\n\t|\n|\r\t)/gm,"");
+      question = question.replace(/ +(?= )/g,'');
+      question = question.split(' ').join('+');
+      question = question.replace(/'/g, '');
+      // context is ready for cape request
+      var theUrl = 'https://responder.thecape.ai/api/0.1/answer?token=' + capeToken;
+      theUrl += '&question=' + question + '&text=' + context;
+      var xmlHttp = new XMLHttpRequest();
+      xmlHttp.open( "GET", theUrl, false ); // false for synchronous request
+      xmlHttp.send( null );
+      var resp = xmlHttp.responseText;
+      resp = JSON.parse(resp);
+      document.getElementById("resultTable").rows[count].cells[2].innerHTML = resp["result"]["items"][0]["answerText"];
+      document.getElementById("resultTable").rows[count].cells[3].innerHTML = resp["result"]["items"][0]["confidence"] * 100 + '%';
+    }
+    </script>
+
+    <!-- The Google API Loader script. -->
+    <!-- <script type="text/javascript" src="https://apis.google.com/js/api.js?onload=loadPicker"></script> -->
+    <script type="text/javascript" src="https://apis.google.com/js/api.js"></script>
+
+  </body>
+</html>
